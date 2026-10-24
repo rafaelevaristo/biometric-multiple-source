@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema Multi-Câmera de Reconhecimento Biométrico</title>
+    <!-- Tailwind CSS para Estilização -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 1. Carregar o motor TensorFlow.js Oficial (Externo e Atualizado) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    
+    <!-- 2. Face-API.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; }
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        
+        /* Loading spinner */
+        .loader {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            border-left-color: #3b82f6;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+    </style>
+</head>
+<body class="h-screen flex overflow-hidden">
+
+    <!-- Ecrã de Carregamento -->
+    <div id="loading-screen" class="fixed inset-0 bg-slate-900 z-50 flex flex-col items-center justify-center transition-opacity duration-500">
+        <div class="loader mb-4"></div>
+        <h2 class="text-xl font-semibold mb-2" id="loading-text">A iniciar Sistema...</h2>
+        <p class="text-slate-400 text-sm max-w-md text-center">A carregar modelos de IA biológicos e a detetar câmeras ligadas. Por favor conceda as permissões de vídeo se solicitado.</p>
+    </div>
+
+    <!-- Modal de Definições -->
+    <div id="settings-modal" class="hidden fixed inset-0 bg-slate-950/80 z-[60] flex items-center justify-center backdrop-blur-sm transition-opacity">
+        <div class="bg-slate-800 border border-slate-700 rounded-lg shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
+            <div class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800/50">
+                <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                    <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    Definições do Sistema
+                </h2>
+                <button id="btn-close-settings" class="text-slate-400 hover:text-white transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            
+            <div class="p-6 flex flex-col gap-6">
+                <!-- Definição: Motor de IA -->
+                <div>
+                    <label class="block text-sm font-semibold text-slate-300 mb-2">Processamento de IA (TensorFlow)</label>
+                    <select id="tf-backend-select" class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500 transition-colors cursor-pointer">
+                        <option value="webgl">Placa Gráfica GPU (WebGL) - Muito Rápido</option>
+                        <option value="cpu">Processador CPU (JS Puro) - Lento</option>
+                    </select>
+                    <div id="tf-backend-status" class="mt-2 text-xs text-slate-400">Estado: A iniciar...</div>
+                </div>
+
+                <!-- Definição: Timeout do Tracker -->
+                <div>
+                    <label class="block text-sm font-semibold text-slate-300 mb-2">Limpeza de Desconhecidos (Segundos)</label>
+                    <p class="text-xs text-slate-400 mb-3">Tempo que a app memoriza a biometria de uma pessoa não registada após ela sair do enquadramento das câmeras.</p>
+                    <div class="flex items-center gap-3">
+                        <input type="number" id="setting-timeout" min="1" max="300" value="5" class="w-24 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                        <span class="text-sm text-slate-300">Segundos</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="p-4 bg-slate-900/50 border-t border-slate-700 flex justify-end">
+                <button id="btn-save-settings" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-medium transition-colors">Concluído</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Barra Lateral: Base de Dados e Registo -->
+    <!-- Escondida por defeito (classe hidden e -ml-[width]) -->
+    <aside id="app-sidebar" class="hidden w-1/3 max-w-sm bg-slate-800 border-r border-slate-700 flex flex-col h-full shadow-2xl z-10 transition-all duration-300">
+        <div class="p-6 border-b border-slate-700 relative">
+            <h1 class="text-2xl font-bold text-white flex items-center gap-2">
+                <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4"></path></svg>
+                BioMatch System
+            </h1>
+            <p class="text-xs text-slate-400 mt-1">Multi-Camera Facial Recognition</p>
+        </div>
+
+        <div class="p-6 overflow-y-auto custom-scrollbar flex-1">
+            <h2 class="text-lg font-semibold mb-4 border-b border-slate-700 pb-2">Adicionar Pessoa</h2>
+            
+            <form id="registration-form" class="flex flex-col gap-4">
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1">Fotografia de Rosto</label>
+                    <input type="file" id="reg-image-input" accept="image/*" class="hidden">
+                    <button type="button" id="btn-select-image" class="w-full py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm transition-colors border border-slate-600 flex justify-center items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                        Selecionar Imagem Local
+                    </button>
+                    <!-- Preview Hidden by default -->
+                    <div id="preview-container" class="hidden mt-2 relative rounded overflow-hidden border border-slate-600 bg-black flex justify-center">
+                        <img id="reg-image-preview" src="" alt="Preview" class="max-h-32 object-contain">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1">Nome Completo</label>
+                    <input type="text" id="reg-name" placeholder="Ex: João Silva" class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 focus:outline-none focus:border-blue-500 text-sm text-white">
+                </div>
+
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1">Detalhes de Identificação</label>
+                    <textarea id="reg-details" placeholder="Cargo, Departamento, ID Funcional..." class="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 focus:outline-none focus:border-blue-500 text-sm text-white resize-none h-20"></textarea>
+                </div>
+
+                <div id="reg-status" class="text-sm font-medium text-center hidden"></div>
+
+                <button type="submit" class="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-medium transition-colors shadow-lg shadow-blue-900/50 mt-2">
+                    Adicionar à Base de Dados
+                </button>
+            </form>
+
+            <div class="mt-8">
+                <h2 class="text-lg font-semibold mb-3 border-b border-slate-700 pb-2">Base de Dados de Enrolment</h2>
+                <div id="db-list" class="flex flex-col gap-2 text-sm text-slate-400">
+                    <p class="italic text-slate-500">Nenhuma pessoa registada na base de dados.</p>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Área Principal: Câmeras e Resultados -->
+    <main class="flex-1 flex flex-col h-full bg-slate-900 min-w-0 relative">
+        
+        <!-- Barra de Ferramentas de Layout (Topo) -->
+        <div class="bg-slate-800 border-b border-slate-700 p-2 flex justify-between items-center shrink-0 shadow-sm z-20">
+            <!-- Esquerda: Ferramentas de Aplicação -->
+            <div class="flex gap-2">
+                <button id="btn-toggle-detection" class="text-xs bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded transition-colors flex items-center gap-2 border border-slate-600">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path></svg>
+                    <span>Parar Deteções</span>
+                </button>
+                <button id="btn-open-settings" class="text-xs bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded transition-colors flex items-center gap-2 border border-slate-600">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    <span>Definições</span>
+                </button>
+            </div>
+
+            <!-- Direita: Controlos de Layout -->
+            <div class="flex gap-2">
+                <!-- Estado Inicial: Os painéis começam escondidos, logo os botões dizem "Mostrar" e estão azuis -->
+                <button id="btn-toggle-sidebar" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors flex items-center gap-2 border border-slate-600">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                    <span>Mostrar Menu Lateral</span>
+                </button>
+                <button id="btn-toggle-cameras" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors flex items-center gap-2 border border-slate-600">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg>
+                    <span>Mostrar Câmeras</span>
+                </button>
+                <button id="btn-toggle-layout" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded transition-colors flex items-center gap-2 border border-slate-600">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"></path></svg>
+                    <span>Vista Esquerda/Direita</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Content Area: Permite alternar entre coluna (vertical) e linha (horizontal) -->
+        <div id="main-content-area" class="flex-1 flex flex-col min-h-0 relative">
+            
+            <!-- Secção de Vídeo das Câmeras (Começa invisível mas ativa no código) -->
+            <!-- O uso de absolute, opacity-0 e z-[-1] esconde as câmeras da UI mas NÃO as pausa no browser -->
+            <div id="section-cameras" class="absolute opacity-0 pointer-events-none z-[-1] flex-shrink-0 p-6 pb-3 flex flex-col border-slate-800 transition-all duration-300 bg-slate-900 w-full">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="text-lg font-semibold flex items-center gap-2 text-white">
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                        Câmeras em Direto
+                    </h2>
+                    <button id="btn-rescan-cameras" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors flex items-center gap-2 shadow-lg shadow-blue-900/50">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        Procurar Novas Câmeras
+                    </button>
+                </div>
+                <div id="cameras-grid" class="flex-1 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 overflow-y-auto custom-scrollbar bg-slate-950 rounded-lg p-4 border border-slate-800">
+                    <!-- Vídeos inseridos dinamicamente -->
+                </div>
+            </div>
+
+            <!-- Secção de Deteções / Resultados -->
+            <div id="section-detections" class="flex-1 p-6 pt-3 flex flex-col min-h-0 w-full transition-all duration-300 z-10">
+                <h2 class="text-lg font-semibold mb-3 text-slate-300">Registo de Deteções (Tempo Real)</h2>
+                <div id="detections-list" class="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-3 pr-2 pb-4">
+                    <!-- Deteções aparecerão aqui -->
+                    <div class="text-center text-slate-600 mt-10 italic" id="empty-detections-msg">
+                        A aguardar deteção de rostos nas câmeras...
+                    </div>
+                </div>
+            </div>
+
+        </div> <!-- Fecha main-content-area -->
+    </main>
+
+    <script>
+        // --- ESTADO GLOBAL DA APLICAÇÃO ---
+        const AppState = {
+            // Base de dados principal (Enrolment manual)
+            database: [], // Formato: { id, name, details, descriptor, imageUrl }
+            
+            // Base de dados Temporária (Tracking de Desconhecidos)
+            tempDatabase: new Map(), // Chave: id temporário (ex: Tracker_123) | Valor: { id, descriptor, lastSeen, imageUrl }
+            
+            // Face-API Matcher combinado (Junta Base de dados principal + temporária)
+            activeMatcher: null, 
+            
+            activeCameras: [], 
+            isModelsLoaded: false,
+            isDetectionActive: true, 
+            detectionInterval: 1200, // Ms entre análises
+            lastDetectionsTracker: new Map(), // Prevenção de spam na UI
+            
+            // Definições Configuráveis
+            settings: {
+                tempTimeout: 5000 // Tempo em MS antes de apagar desconhecidos sem deteção
+            }
+        };
+
+        // --- ELEMENTOS DO DOM ---
+        const DOM = {
+            loadingScreen: document.getElementById('loading-screen'),
+            loadingText: document.getElementById('loading-text'),
+            camerasGrid: document.getElementById('cameras-grid'),
+            detectionsList: document.getElementById('detections-list'),
+            emptyDetectionsMsg: document.getElementById('empty-detections-msg'),
+            btnRescanCameras: document.getElementById('btn-rescan-cameras'),
+            
+            // Settings Elements
+            settingsModal: document.getElementById('settings-modal'),
+            btnOpenSettings: document.getElementById('btn-open-settings'),
+            btnCloseSettings: document.getElementById('btn-close-settings'),
+            btnSaveSettings: document.getElementById('btn-save-settings'),
+            tfBackendSelect: document.getElementById('tf-backend-select'),
+            tfBackendStatus: document.getElementById('tf-backend-status'),
+            settingTimeout: document.getElementById('setting-timeout'),
+            
+            // Registration Form Elements
+            btnSelectImage: document.getElementById('btn-select-image'),
+            regImageInput: document.getElementById('reg-image-input'),
+            previewContainer: document.getElementById('preview-container'),
+            regImagePreview: document.getElementById('reg-image-preview'),
+            regName: document.getElementById('reg-name'),
+            regDetails: document.getElementById('reg-details'),
+            regForm: document.getElementById('registration-form'),
+            regStatus: document.getElementById('reg-status'),
+            dbList: document.getElementById('db-list'),
+            
+            // Layout Elements
+            appSidebar: document.getElementById('app-sidebar'),
+            mainContentArea: document.getElementById('main-content-area'),
+            sectionCameras: document.getElementById('section-cameras'),
+            sectionDetections: document.getElementById('section-detections'),
+            btnToggleSidebar: document.getElementById('btn-toggle-sidebar'),
+            btnToggleCameras: document.getElementById('btn-toggle-cameras'),
+            btnToggleLayout: document.getElementById('btn-toggle-layout'),
+            btnToggleDetection: document.getElementById('btn-toggle-detection')
+        };
+
+        // --- CONTROLO DE LAYOUT ---
+        // Alterado: Inicia com barra lateral e câmeras escondidas
+        let isSidebarVisible = false;
+        let areCamerasVisible = false;
+        let isLayoutVertical = true;
+
+        DOM.btnToggleSidebar.addEventListener('click', () => {
+            isSidebarVisible = !isSidebarVisible;
+            if (isSidebarVisible) {
+                DOM.appSidebar.classList.remove('hidden');
+                DOM.btnToggleSidebar.querySelector('span').innerText = 'Esconder Menu Lateral';
+                DOM.btnToggleSidebar.classList.remove('bg-blue-600', 'hover:bg-blue-500', 'text-white');
+            } else {
+                DOM.appSidebar.classList.add('hidden');
+                DOM.btnToggleSidebar.querySelector('span').innerText = 'Mostrar Menu Lateral';
+                DOM.btnToggleSidebar.classList.add('bg-blue-600', 'hover:bg-blue-500', 'text-white');
+            }
+        });
+
+        DOM.btnToggleCameras.addEventListener('click', () => {
+            areCamerasVisible = !areCamerasVisible;
+            if (areCamerasVisible) {
+                // Remover classes que escondem o vídeo
+                DOM.sectionCameras.classList.remove('absolute', 'opacity-0', 'pointer-events-none', 'z-[-1]', 'w-full');
+                
+                // Aplicar layout flex
+                if (isLayoutVertical) {
+                    DOM.sectionCameras.classList.add('h-1/2', 'border-b');
+                } else {
+                    DOM.sectionCameras.classList.add('w-1/2', 'border-r');
+                }
+                
+                DOM.btnToggleCameras.querySelector('span').innerText = 'Esconder Câmeras';
+                DOM.btnToggleCameras.classList.remove('bg-blue-600', 'hover:bg-blue-500', 'text-white');
+            } else {
+                // Limpar layout
+                DOM.sectionCameras.classList.remove('h-1/2', 'border-b', 'w-1/2', 'border-r');
+                // Esconder mas MANTER A PROCESSAR EM PLANO DE FUNDO
+                DOM.sectionCameras.classList.add('absolute', 'opacity-0', 'pointer-events-none', 'z-[-1]', 'w-full');
+                
+                DOM.btnToggleCameras.querySelector('span').innerText = 'Mostrar Câmeras';
+                DOM.btnToggleCameras.classList.add('bg-blue-600', 'hover:bg-blue-500', 'text-white');
+            }
+        });
+
+        DOM.btnToggleLayout.addEventListener('click', () => {
+            isLayoutVertical = !isLayoutVertical;
+            if (isLayoutVertical) {
+                DOM.mainContentArea.classList.replace('flex-row', 'flex-col');
+                if (areCamerasVisible) {
+                    DOM.sectionCameras.classList.add('h-1/2', 'border-b');
+                    DOM.sectionCameras.classList.remove('w-1/2', 'border-r');
+                }
+                DOM.btnToggleLayout.querySelector('span').innerText = 'Vista Esquerda/Direita';
+            } else {
+                DOM.mainContentArea.classList.replace('flex-col', 'flex-row');
+                if (areCamerasVisible) {
+                    DOM.sectionCameras.classList.remove('h-1/2', 'border-b');
+                    DOM.sectionCameras.classList.add('w-1/2', 'border-r');
+                }
+                DOM.btnToggleLayout.querySelector('span').innerText = 'Vista Cima/Baixo';
+            }
+        });
+
+        // Controlo de Deteção
+        DOM.btnToggleDetection.addEventListener('click', () => {
+            AppState.isDetectionActive = !AppState.isDetectionActive;
+            const btn = DOM.btnToggleDetection;
+            
+            if (AppState.isDetectionActive) {
+                btn.classList.replace('bg-emerald-600', 'bg-red-600');
+                btn.classList.replace('hover:bg-emerald-500', 'hover:bg-red-500');
+                btn.innerHTML = `
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path></svg>
+                    <span>Parar Deteções</span>
+                `;
+            } else {
+                btn.classList.replace('bg-red-600', 'bg-emerald-600');
+                btn.classList.replace('hover:bg-red-500', 'hover:bg-emerald-500');
+                btn.innerHTML = `
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <span>Retomar Deteções</span>
+                `;
+            }
+        });
+
+        // --- SISTEMA DE DEFINIÇÕES (MODAL) ---
+        function toggleSettingsModal(show) {
+            if (show) {
+                DOM.settingsModal.classList.remove('hidden');
+            } else {
+                DOM.settingsModal.classList.add('hidden');
+                // Guardar valor do timeout ao fechar
+                const val = parseInt(DOM.settingTimeout.value);
+                if (val && val > 0) {
+                    AppState.settings.tempTimeout = val * 1000; // converter para milisegundos
+                }
+            }
+        }
+        
+        DOM.btnOpenSettings.addEventListener('click', () => toggleSettingsModal(true));
+        DOM.btnCloseSettings.addEventListener('click', () => toggleSettingsModal(false));
+        DOM.btnSaveSettings.addEventListener('click', () => toggleSettingsModal(false));
+        
+        DOM.tfBackendSelect.addEventListener('change', async (e) => {
+            const newBackend = e.target.value;
+            DOM.tfBackendStatus.innerHTML = `Estado: <span class="text-yellow-400">A alterar para ${newBackend}...</span>`;
+            
+            try {
+                await tf.setBackend(newBackend);
+                await tf.ready();
+                updateBackendUI();
+            } catch (err) {
+                console.error("Erro ao alterar processador:", err);
+                DOM.tfBackendStatus.innerHTML = `Estado: <span class="text-red-400">Falha ao alterar!</span>`;
+                DOM.tfBackendSelect.value = tf.getBackend();
+            }
+        });
+
+        function updateBackendUI() {
+            const currentBackend = tf.getBackend();
+            DOM.tfBackendSelect.value = currentBackend;
+            let displayName = currentBackend === 'webgl' ? 'GPU (WebGL)' : (currentBackend === 'cpu' ? 'CPU (JS Puro)' : currentBackend);
+            DOM.tfBackendStatus.innerHTML = `Estado: Em uso <strong class="text-emerald-400">${displayName}</strong>`;
+        }
+
+
+        // --- INICIALIZAÇÃO ---
+        window.onload = async () => {
+            try {
+                updateLoadingStatus("A inicializar TensorFlow.js oficial externo...");
+                
+                await tf.ready();
+                updateBackendUI();
+                
+                console.log("TensorFlow carregado! Versão:", tf.version.tfjs, "Backend:", tf.getBackend());
+
+                updateLoadingStatus("A carregar modelos de biometria...");
+                const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+                
+                await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+                await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+
+                AppState.isModelsLoaded = true;
+                
+                updateLoadingStatus("A procurar câmeras ligadas...");
+                await initializeCameras();
+
+                DOM.loadingScreen.style.opacity = '0';
+                setTimeout(() => DOM.loadingScreen.classList.add('hidden'), 500);
+
+                // Iniciar Loop de Deteção
+                startDetectionLoop();
+                
+                // Iniciar Loop de Limpeza de Trackers Temporários
+                startCleanupLoop();
+
+            } catch (error) {
+                console.error("Erro na inicialização:", error);
+                updateLoadingStatus("Erro Fatal: " + error.message, true);
+            }
+        };
+
+        function updateLoadingStatus(msg, isError = false) {
+            DOM.loadingText.innerText = msg;
+            if (isError) {
+                DOM.loadingText.classList.replace('text-white', 'text-red-500');
+                document.querySelector('.loader').style.display = 'none';
+            }
+        }
+
+        // --- LIGAÇÃO ÀS CÂMERAS ---
+        async function initializeCameras() {
+            try {
+                await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                if (videoDevices.length === 0) throw new Error("Nenhuma câmera encontrada.");
+
+                DOM.camerasGrid.innerHTML = '';
+                
+                for (let i = 0; i < videoDevices.length; i++) {
+                    const device = videoDevices[i];
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({
+                            video: { deviceId: { exact: device.deviceId } }
+                        });
+                        
+                        const camContainer = document.createElement('div');
+                        camContainer.className = "relative bg-black rounded-lg overflow-hidden border border-slate-700 shadow-md group";
+                        
+                        const videoEl = document.createElement('video');
+                        videoEl.srcObject = stream;
+                        videoEl.autoplay = true;
+                        videoEl.muted = true;
+                        videoEl.playsInline = true;
+                        videoEl.className = "w-full h-full object-cover";
+                        videoEl.id = `cam_${i}`;
+                        
+                        const label = document.createElement('div');
+                        label.className = "absolute bottom-0 left-0 bg-slate-900/80 text-white text-xs px-2 py-1 w-full flex justify-between";
+                        label.innerHTML = `<span>Cam ${i+1}</span> <span class="text-slate-400 truncate ml-2 text-right">${device.label || 'Câmera Desconhecida'}</span>`;
+
+                        // Botão Fechar Câmara (X Vermelho)
+                        const removeBtn = document.createElement('button');
+                        removeBtn.className = "absolute top-2 left-2 bg-red-600/80 hover:bg-red-500 text-white p-2 rounded-full transition-colors z-20 shadow-lg border border-red-400/50 backdrop-blur-sm opacity-0 group-hover:opacity-100";
+                        removeBtn.title = "Desligar esta Câmera";
+                        removeBtn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>`;
+                        removeBtn.onclick = () => {
+                            if (videoEl.srcObject) videoEl.srcObject.getTracks().forEach(t => t.stop());
+                            AppState.activeCameras = AppState.activeCameras.filter(c => c.id !== device.deviceId);
+                            camContainer.remove();
+                        };
+
+                        // Botão Capturar Foto (Ícone Câmara Azul)
+                        const captureBtn = document.createElement('button');
+                        captureBtn.className = "absolute top-2 right-2 bg-blue-600/80 hover:bg-blue-500 text-white p-2 rounded-full transition-colors z-20 shadow-lg border border-blue-400/50 backdrop-blur-sm opacity-0 group-hover:opacity-100";
+                        captureBtn.title = "Capturar rosto para Registo";
+                        captureBtn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>`;
+                        captureBtn.onclick = () => {
+                            if (videoEl.videoWidth === 0) return;
+                            const canvas = document.createElement('canvas');
+                            canvas.width = videoEl.videoWidth; canvas.height = videoEl.videoHeight;
+                            canvas.getContext('2d').drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+                            DOM.regImagePreview.src = canvas.toDataURL('image/jpeg', 0.9);
+                            DOM.previewContainer.classList.remove('hidden');
+                            
+                            // Forçar a abertura da barra lateral se estiver escondida
+                            if (!isSidebarVisible) DOM.btnToggleSidebar.click();
+                            
+                            showRegStatus("Foto da câmera carregada! Escreva o nome.", false);
+                            DOM.regName.focus();
+                        };
+
+                        camContainer.appendChild(videoEl);
+                        camContainer.appendChild(removeBtn);
+                        camContainer.appendChild(captureBtn);
+                        camContainer.appendChild(label);
+                        DOM.camerasGrid.appendChild(camContainer);
+
+                        AppState.activeCameras.push({ video: videoEl, id: device.deviceId, name: `Cam ${i+1}` });
+                    } catch (camErr) {
+                        console.warn(`Não iniciou a câmera ${device.label}`, camErr);
+                    }
+                }
+            } catch (err) {
+                console.error("Erro Cameras:", err);
+            }
+        }
+
+        DOM.btnRescanCameras.addEventListener('click', async () => {
+            DOM.btnRescanCameras.innerHTML = 'A procurar...';
+            AppState.activeCameras.forEach(cam => {
+                if (cam.video.srcObject) cam.video.srcObject.getTracks().forEach(t => t.stop());
+            });
+            AppState.activeCameras = [];
+            await initializeCameras();
+            DOM.btnRescanCameras.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>Procurar Novas Câmeras';
+        });
+
+        // --- SISTEMA DE REGISTO NA BASE DE DADOS (ENROLMENT) ---
+        DOM.btnSelectImage.addEventListener('click', () => DOM.regImageInput.click());
+        
+        DOM.regImageInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0]) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    DOM.regImagePreview.src = e.target.result;
+                    DOM.previewContainer.classList.remove('hidden');
+                };
+                reader.readAsDataURL(e.target.files[0]);
+            }
+        });
+
+        function showRegStatus(message, isError = false) {
+            DOM.regStatus.textContent = message;
+            DOM.regStatus.className = `text-sm font-medium text-center py-2 rounded ${isError ? 'bg-red-900/50 text-red-300' : 'bg-green-900/50 text-green-300'} block`;
+            setTimeout(() => DOM.regStatus.classList.add('hidden'), 5000);
+        }
+
+        DOM.regForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = DOM.regName.value.trim();
+            const details = DOM.regDetails.value.trim();
+            const imageSrc = DOM.regImagePreview.src;
+
+            if (!name || !imageSrc || imageSrc === window.location.href) {
+                showRegStatus("Erro: Fotografia e Nome obrigatórios.", true); return;
+            }
+
+            const tempImg = new Image(); tempImg.src = imageSrc;
+            showRegStatus("A processar biometria facial...", false);
+            DOM.regForm.querySelector('button[type="submit"]').disabled = true;
+
+            tempImg.onload = async () => {
+                try {
+                    const detection = await faceapi.detectSingleFace(tempImg, new faceapi.TinyFaceDetectorOptions())
+                        .withFaceLandmarks().withFaceDescriptor();
+
+                    if (!detection) {
+                        showRegStatus("Erro: Rosto não legível na imagem.", true);
+                    } else {
+                        const newId = 'person_' + Date.now();
+                        AppState.database.push({ id: newId, name: name, details: details, descriptor: detection.descriptor, imageUrl: imageSrc });
+                        
+                        updateCombinedFaceMatcher();
+                        updateDBListUI();
+                        
+                        DOM.regForm.reset();
+                        DOM.previewContainer.classList.add('hidden');
+                        DOM.regImagePreview.src = '';
+                        showRegStatus(`Sucesso! ${name} adicionado.`, false);
+                    }
+                } catch (err) {
+                    showRegStatus("Erro ao extrair biometria.", true);
+                } finally {
+                    DOM.regForm.querySelector('button[type="submit"]').disabled = false;
+                }
+            };
+        });
+
+        function updateDBListUI() {
+            DOM.dbList.innerHTML = '';
+            if (AppState.database.length === 0) {
+                DOM.dbList.innerHTML = '<p class="italic text-slate-500">Vazia.</p>'; return;
+            }
+            AppState.database.forEach(entry => {
+                const div = document.createElement('div');
+                div.className = "flex items-center gap-3 p-2 bg-slate-900 rounded border border-slate-700";
+                div.innerHTML = `
+                    <img src="${entry.imageUrl}" class="w-10 h-10 rounded-full object-cover border border-slate-600">
+                    <div class="flex-1 min-w-0">
+                        <p class="text-slate-200 font-medium text-sm truncate">${entry.name}</p>
+                        <p class="text-slate-500 text-xs truncate">${entry.details || '-'}</p>
+                    </div>
+                `;
+                DOM.dbList.appendChild(div);
+            });
+        }
+
+        // --- SISTEMA BIOMÉTRICO CENTRALIZADO (CONHECIDOS E TRACKING DE DESCONHECIDOS) ---
+        
+        // Reconstrói a IA com quem está na DB fixa + os Desconhecidos atuais que andam a ser seguidos
+        function updateCombinedFaceMatcher() {
+            const labeledDescriptors = [];
+            
+            // Adicionar Pessoas Registas
+            AppState.database.forEach(entry => {
+                labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(entry.id, [entry.descriptor]));
+            });
+            
+            // Adicionar Pessoas Desconhecidas (Em Tracking)
+            AppState.tempDatabase.forEach((tempData, tempId) => {
+                labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(tempId, [tempData.descriptor]));
+            });
+
+            if (labeledDescriptors.length === 0) {
+                AppState.activeMatcher = null;
+            } else {
+                AppState.activeMatcher = new faceapi.FaceMatcher(labeledDescriptors, 0.55); // 0.55 Limiar de Confiança
+            }
+        }
+
+        // Limpeza de rostos temporários (Memory Cleanup)
+        function startCleanupLoop() {
+            setInterval(() => {
+                let didRemove = false;
+                const now = Date.now();
+                
+                AppState.tempDatabase.forEach((tempData, tempId) => {
+                    // Se não o vemos há X segundos (definido nas Settings)
+                    if (now - tempData.lastSeen > AppState.settings.tempTimeout) {
+                        AppState.tempDatabase.delete(tempId);
+                        didRemove = true;
+                        console.log(`Tracking Biométrico Apagado: ${tempId} por inatividade.`);
+                    }
+                });
+
+                if (didRemove) {
+                    // Se apagámos alguém da RAM, temos de atualizar a rede neural de pesquisa
+                    updateCombinedFaceMatcher();
+                }
+            }, 1000); // Verifica a cada segundo
+        }
+
+        async function startDetectionLoop() {
+            while (true) {
+                if (AppState.isModelsLoaded && AppState.activeCameras.length > 0 && AppState.isDetectionActive) {
+                    const promises = AppState.activeCameras.map(cam => processVideoFrame(cam));
+                    await Promise.all(promises);
+                }
+                await new Promise(resolve => setTimeout(resolve, AppState.detectionInterval));
+            }
+        }
+
+        function extractFaceImage(videoEl, box) {
+            const canvas = document.createElement('canvas');
+            const pad = 20; 
+            canvas.width = box.width + pad*2; canvas.height = box.height + pad*2;
+            const ctx = canvas.getContext('2d');
+            const sx = Math.max(0, box.x - pad); const sy = Math.max(0, box.y - pad);
+            const sw = Math.min(videoEl.videoWidth - sx, box.width + pad*2);
+            const sh = Math.min(videoEl.videoHeight - sy, box.height + pad*2);
+            ctx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, sw, sh);
+            return canvas.toDataURL('image/jpeg', 0.8);
+        }
+
+        async function processVideoFrame(cam) {
+            const videoEl = cam.video;
+            if (videoEl.videoWidth === 0) return;
+
+            try {
+                const detections = await faceapi.detectAllFaces(videoEl, new faceapi.TinyFaceDetectorOptions())
+                    .withFaceLandmarks().withFaceDescriptors();
+
+                if (detections.length === 0) return;
+
+                detections.forEach(detection => {
+                    const desc = detection.descriptor;
+                    const box = detection.detection.box;
+                    let matchLabel = 'unknown';
+                    let isKnown = false;
+                    let personData = null;
+
+                    // 1. Procurar correspondência
+                    if (AppState.activeMatcher) {
+                        const match = AppState.activeMatcher.findBestMatch(desc);
+                        matchLabel = match.label;
+                    }
+
+                    // 2. Lógica de Tracking
+                    if (matchLabel === 'unknown') {
+                        // ROSTO 100% NOVO E DESCONHECIDO -> Iniciar Tracking Temporário
+                        const tempIdStr = Math.floor(1000 + Math.random() * 9000);
+                        const newTempId = `Tracker_${tempIdStr}`;
+                        const faceCaptureSrc = extractFaceImage(videoEl, box);
+                        
+                        const tempEntry = {
+                            id: newTempId,
+                            descriptor: desc,
+                            lastSeen: Date.now(),
+                            imageUrl: faceCaptureSrc
+                        };
+                        
+                        AppState.tempDatabase.set(newTempId, tempEntry);
+                        updateCombinedFaceMatcher(); // Atualizar Motor
+                        
+                        matchLabel = newTempId;
+                        personData = tempEntry;
+                        isKnown = false;
+                        console.log("Novo Tracking Iniciado:", newTempId);
+                        
+                    } else if (matchLabel.startsWith('Tracker_')) {
+                        // DESCONHECIDO JÁ EM TRACKING -> Atualizar o tempo que o vimos pela última vez
+                        personData = AppState.tempDatabase.get(matchLabel);
+                        if (personData) {
+                            personData.lastSeen = Date.now();
+                        }
+                        isKnown = false;
+                    } else {
+                        // PESSOA CONHECIDA NA BASE DE DADOS
+                        personData = AppState.database.find(e => e.id === matchLabel);
+                        isKnown = true;
+                    }
+
+                    // 3. Sistema Anti-Spam para a UI (Não encher a lista de eventos com a mesma pessoa repetidamente)
+                    const trackingKey = `${cam.id}_${matchLabel}`;
+                    const lastSeenUI = AppState.lastDetectionsTracker.get(trackingKey) || 0;
+                    const now = Date.now();
+                    
+                    if (now - lastSeenUI < 4000) return; // Se reportámos há menos de 4s, ignorar e não desenhar cartão
+                    
+                    AppState.lastDetectionsTracker.set(trackingKey, now);
+
+                    // 4. Renderizar Evento no Ecrã
+                    const captureSrc = extractFaceImage(videoEl, box);
+                    renderDetectionCard(isKnown, personData, captureSrc, cam.name);
+                });
+
+            } catch (err) {
+                console.error("Erro a processar frame:", err);
+            }
+        }
+
+        // --- UI DOS EVENTOS DE DETEÇÃO ---
+        function renderDetectionCard(isKnown, data, captureSrc, camName) {
+            if (DOM.emptyDetectionsMsg) DOM.emptyDetectionsMsg.style.display = 'none';
+
+            const card = document.createElement('div');
+            const timeStr = new Date().toLocaleTimeString('pt-PT', {hour12: false});
+            
+            if (isKnown) {
+                // PESSOA REGISTADA - FUNDO VERDE
+                card.className = "flex gap-4 p-4 rounded-lg bg-emerald-950/40 border border-emerald-600/50 relative overflow-hidden shrink-0 animate-fade-in";
+                card.innerHTML = `
+                    <div class="absolute top-0 right-0 bg-emerald-600 text-white text-xs px-2 py-1 rounded-bl flex items-center gap-1">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        Identidade Confirmada
+                    </div>
+                    <div class="flex gap-2 items-center z-10 pt-2">
+                        <div class="text-center">
+                            <img src="${captureSrc}" class="w-16 h-16 rounded-md object-cover border-2 border-emerald-500/50">
+                            <span class="text-[10px] text-emerald-400 mt-1 block uppercase font-semibold">Câmera</span>
+                        </div>
+                        <svg class="w-5 h-5 text-emerald-500/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                        <div class="text-center">
+                            <img src="${data.imageUrl}" class="w-16 h-16 rounded-md object-cover border-2 border-emerald-500/50">
+                            <span class="text-[10px] text-emerald-400 mt-1 block uppercase font-semibold">DB</span>
+                        </div>
+                    </div>
+                    <div class="flex-1 flex flex-col justify-center ml-2 z-10">
+                        <h3 class="text-emerald-100 font-bold text-lg">${data.name}</h3>
+                        <p class="text-emerald-300/80 text-sm mt-0.5">${data.details || 'Sem detalhes registados.'}</p>
+                        <div class="flex items-center gap-3 mt-2 text-xs text-emerald-400/60 font-mono">
+                            <span class="flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> ${timeStr}</span>
+                            <span class="flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg> ${camName}</span>
+                        </div>
+                    </div>
+                `;
+            } else {
+                // PESSOA DESCONHECIDA (EM TRACKING TEMPORÁRIO) - FUNDO VERMELHO
+                // Usa o Tracker_ID atribuído temporariamente
+                const trackerId = data ? data.id : 'unknown';
+                
+                card.className = "flex gap-4 p-4 rounded-lg bg-red-950/40 border border-red-600/50 relative overflow-hidden shrink-0 animate-fade-in";
+                card.innerHTML = `
+                    <div class="absolute top-0 right-0 bg-red-600 text-white text-xs px-2 py-1 rounded-bl flex items-center gap-1">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                        Não Reconhecido
+                    </div>
+                    <div class="flex flex-col items-center z-10 pt-2">
+                        <img src="${captureSrc}" class="w-16 h-16 rounded-md object-cover border-2 border-red-500/50">
+                        <span class="text-[10px] text-red-400 mt-1 block uppercase font-semibold">Em Rastreio</span>
+                    </div>
+                    <div class="flex-1 flex flex-col justify-center ml-4 z-10">
+                        <h3 class="text-red-100 font-bold text-lg">Indivíduo Desconhecido</h3>
+                        <p class="text-red-300/80 text-sm mt-0.5">Não pertence à base de dados de enrolment.</p>
+                        <p class="text-red-400 text-xs font-mono font-bold mt-1 bg-red-900/40 py-0.5 px-2 rounded inline-block self-start border border-red-800">
+                            ID Temporário: ${trackerId}
+                        </p>
+                        <div class="flex items-center gap-3 mt-2 text-xs text-red-400/60 font-mono">
+                            <span class="flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> ${timeStr}</span>
+                            <span class="flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg> ${camName}</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            DOM.detectionsList.insertBefore(card, DOM.detectionsList.firstChild);
+            
+            // Manter apenas as últimas 30 na UI
+            if (DOM.detectionsList.children.length > 30) DOM.detectionsList.removeChild(DOM.detectionsList.lastChild);
+        }
+    </script>
+</body>
+</html>
