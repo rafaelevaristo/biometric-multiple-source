@@ -88,6 +88,16 @@
                     </div>
                 </div>
 
+                <!-- NOVA DEFINIÇÃO: Modelo de Deteção -->
+                <div class="pt-4 border-t border-slate-700">
+                    <label class="block text-sm font-semibold text-slate-300 mb-2">Modelo de Deteção Facial (IA)</label>
+                    <select id="setting-detector-model" class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500 transition-colors cursor-pointer">
+                        <option value="tiny">Tiny Face Detector (Leve e Muito Rápido)</option>
+                        <option value="ssd">SSD MobileNet V1 (Pesado e Alta Precisão)</option>
+                    </select>
+                    <p class="text-xs text-slate-400 mt-2">O modelo SSD reduz falhas de biometria e encontra rostos mais longe, mas exige mais da placa gráfica.</p>
+                </div>
+
                 <!-- Definições: Filtros de Qualidade de Rosto -->
                 <div class="pt-4 border-t border-slate-700">
                     <label class="block text-sm font-semibold text-slate-300 mb-2">Qualidade Mínima do Rosto</label>
@@ -302,6 +312,7 @@
                 minFaceSize: 80,   // Tamanho mínimo da bounding box do rosto em pixeis
                 maxDescriptorsPerPerson: 5, // Quantos ângulos memoriza de uma pessoa desconhecida
                 displayMode: 'new_only',     // 'new_only' ou 'all'
+                detectorModel: 'tiny', // 'tiny' ou 'ssd'
                 usePoseFilter: true, // Liga/Desliga o filtro de Pitch e Yaw
                 poseTolerance: 50    // 10 a 100. (Mais alto = aceita mais ângulos laterais)
             }
@@ -330,6 +341,7 @@
             settingMinSize: document.getElementById('setting-min-size'),
             settingMinSizeVal: document.getElementById('setting-min-size-val'),
             settingDisplayMode: document.getElementById('setting-display-mode'),
+            settingDetectorModel: document.getElementById('setting-detector-model'),
 
             // Pose Settings
             settingUsePose: document.getElementById('setting-use-pose'),
@@ -452,6 +464,7 @@
                 DOM.settingMinSizeVal.innerText = `${DOM.settingMinSize.value} px`;
                 DOM.settingDisplayMode.value = AppState.settings.displayMode;
                 DOM.settingTimeout.value = AppState.settings.tempTimeout / 1000;
+                DOM.settingDetectorModel.value = AppState.settings.detectorModel;
                 
                 // Pose
                 DOM.settingUsePose.checked = AppState.settings.usePoseFilter;
@@ -467,6 +480,7 @@
                 AppState.settings.minScore = parseInt(DOM.settingMinScore.value) / 100;
                 AppState.settings.minFaceSize = parseInt(DOM.settingMinSize.value);
                 AppState.settings.displayMode = DOM.settingDisplayMode.value;
+                AppState.settings.detectorModel = DOM.settingDetectorModel.value;
                 
                 // Pose
                 AppState.settings.usePoseFilter = DOM.settingUsePose.checked;
@@ -523,6 +537,7 @@
                 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
                 
                 await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                await faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL); // Carregar o modelo pesado
                 await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
                 await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
 
@@ -825,7 +840,15 @@
             if (videoEl.videoWidth === 0) return;
 
             try {
-                const detections = await faceapi.detectAllFaces(videoEl, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: AppState.settings.minScore }))
+                // Escolher o motor baseado nas definições
+                let detectionOptions;
+                if (AppState.settings.detectorModel === 'ssd') {
+                    detectionOptions = new faceapi.SsdMobilenetv1Options({ minConfidence: AppState.settings.minScore });
+                } else {
+                    detectionOptions = new faceapi.TinyFaceDetectorOptions({ scoreThreshold: AppState.settings.minScore });
+                }
+
+                const detections = await faceapi.detectAllFaces(videoEl, detectionOptions)
                     .withFaceLandmarks().withFaceDescriptors();
 
                 AppState.fpsCounter.count++;
